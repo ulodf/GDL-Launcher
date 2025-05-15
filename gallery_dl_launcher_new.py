@@ -820,10 +820,8 @@ class Application(tk.Tk):
         self.url_checker_frame = URLCheckerFrame(self.notebook, lambda: self.instances)
         self.notebook.add(self.url_checker_frame, text="URL Checker")
         
-        # Create instance tabs (default to 3)
+        # Create instance tabs (will be loaded from state or defaults)
         self.instances = []
-        for i in range(3):
-            self._create_instance(i)
         
         # Create menu
         self._create_menu()
@@ -835,6 +833,9 @@ class Application(tk.Tk):
         
         # Set up clean exit
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Load application state
+        self.load_state()
     
     def _create_menu(self):
         """Create the application menu"""
@@ -869,13 +870,19 @@ class Application(tk.Tk):
         )
         self.notebook.add(instance, text=f"Instance {idx+1}")
         self.instances.append(instance)
+        
+        # Load saved links for this instance
+        instance._load_links()
     
     def add_instance(self):
         """Add a new instance tab"""
         new_idx = len(self.instances)
         self._create_instance(new_idx)
-        self.notebook.select(new_idx + 2)  # +2 for config and log tabs
+        self.notebook.select(new_idx + 3)  # +3 for config, log, and URL checker tabs
         self.status_var.set(f"Added instance {new_idx+1}")
+        
+        # Save application state after adding instance
+        self.save_state()
     
     def save_all(self):
         """Save all configuration and instance data"""
@@ -887,7 +894,59 @@ class Application(tk.Tk):
             instance._save_settings()
             instance._save_links()
         
+        # Save application state
+        self.save_state()
+        
         self.status_var.set("All settings saved")
+        
+    def save_state(self):
+        """Save the application state, including number of instances and window geometry"""
+        state_dir = DATA_DIR / "state"
+        state_dir.mkdir(exist_ok=True)
+        
+        state = {
+            "instance_count": len(self.instances),
+            "geometry": self.geometry(),
+            "timestamp": datetime.now().strftime(TIMESTAMP_FMT)
+        }
+        
+        state_file = state_dir / "app_state.json"
+        
+        try:
+            with open(state_file, 'w', encoding='utf-8') as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            print(f"Error saving application state: {e}")
+    
+    def load_state(self):
+        """Load the application state, including number of instances and window geometry"""
+        state_file = DATA_DIR / "state" / "app_state.json"
+        
+        # Default state
+        instance_count = 3
+        
+        if state_file.exists():
+            try:
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    state = json.load(f)
+                
+                # Get instance count from state
+                instance_count = state.get("instance_count", 3)
+                
+                # Restore window geometry
+                if "geometry" in state:
+                    try:
+                        self.geometry(state["geometry"])
+                    except:
+                        pass  # Ignore geometry errors
+                        
+                self.status_var.set(f"Loaded application state from {state.get('timestamp', 'unknown')}")
+            except Exception as e:
+                print(f"Error loading application state: {e}")
+        
+        # Create instances
+        for i in range(instance_count):
+            self._create_instance(i)
     
     def on_closing(self):
         """Handle application closing"""
@@ -903,14 +962,16 @@ class Application(tk.Tk):
                     if instance.is_running():
                         instance.stop()
                 
-                # Save all settings
+                # Save all settings and state
                 self.save_all()
+                self.save_state()  # Ensure state is saved when closing
                 
                 # Destroy the application
                 self.destroy()
         else:
-            # Save all settings
+            # Save all settings and state
             self.save_all()
+            self.save_state()  # Ensure state is saved when closing
             
             # Destroy the application
             self.destroy()
