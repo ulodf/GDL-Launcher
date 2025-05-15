@@ -39,7 +39,7 @@ TIMESTAMP_FMT = '%Y-%m-%d %H%M%S'
 # ──────────────────────────────────────────────────────────────────────────────
 DEFAULT_CONFIG = """# Gallery-dl global options - edit as needed
 --cookies cookies.txt
--o filename={date%Y-%m-%d}_{user}_{title}_{id} {num02}.{extension}
+-o filename={date:%Y-%m-%d}_{user}_{title}_{id} {num:>02}.{extension}
 # --download-archive global-archive.txt  # Uncomment to use a global archive"""
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -392,19 +392,15 @@ class InstanceFrame(ttk.Frame):
         if self.is_running():
             return
         
-        # Get URLs from the text box
+        # Get links from the textbox
         links = self.links_box.get('1.0', 'end').strip().splitlines()
-        links = [link.strip() for link in links if link.strip()]
-        
         if not links:
-            messagebox.showinfo("No URLs", "Please enter URLs to download")
             return
         
         # Save settings and links
         self._save_settings()
         self._save_links()
         
-        # Create directories if they don't exist
         output_dir = Path(self.output_dir_var.get())
         temp_dir = Path(self.temp_dir_var.get())
         archive_file = Path(self.archive_file_var.get())
@@ -413,113 +409,139 @@ class InstanceFrame(ttk.Frame):
         temp_dir.mkdir(parents=True, exist_ok=True)
         archive_file.parent.mkdir(parents=True, exist_ok=True)
         
-        # Build command
+        # Build command - START WITH SIMPLE COMMAND
         cmd = ["gallery-dl"]
         
-        # Add global options
-        cmd.extend(self.get_global_opts())
+        # Add cookies if needed
+        cookies_file = Path("cookies.txt")
+        if cookies_file.exists():
+            cmd.extend(["--cookies", str(cookies_file)])
         
-        # Add instance-specific options
+        # Use a very simple, robust output pattern
+        cmd.extend(["-o", "filename={filename}.{extension}"])
+        
+        # Add output directory
         if output_dir:
             cmd.extend(["-d", str(output_dir)])
+            
+        # Force text-based archive format
+        cmd.extend(["--option", "archive.format=text"])
+        
+        # Add download archive
+        cmd.extend(["--download-archive", str(archive_file)])
         
         # Add temporary directory for .part files (using the correct config option)
         # The proper way to set part-directory according to the docs
-        # Apply to all downloaders by setting for http, text, and ytdl downloaders
         cmd.extend(["--option", f"downloader.http.part-directory={str(temp_dir)}"])
-        cmd.extend(["--option", f"downloader.text.part-directory={str(temp_dir)}"])
-        cmd.extend(["--option", f"downloader.ytdl.part-directory={str(temp_dir)}"])
-        
-        # Force text-based archive format instead of sqlite
-        # First, use the configuration option to set archive format to text
-        cmd.extend(["--option", "archive.format=text"])
-        
-        # Make sure the archive directory exists
-        archive_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Then use the download archive option
-        cmd.extend(["--download-archive", str(archive_file)])
-        
-        # Add content type filters
+            
+        # Add content type filters using well-established filter syntax
         if self.download_images_var.get() and self.download_videos_var.get():
-            # Both images and videos - no need for filter
+            # Both images and videos - no filter needed
             pass
-        elif self.download_images_var.get():
-            # Only images - exclude video extensions
-            image_filter = "extension not in ('mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v')"
-            cmd.extend(["--filter", image_filter])
-        elif self.download_videos_var.get():
-            # Only videos - use the syntax provided by the user
-            video_filter = "extension in ('mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v')"
-            cmd.extend(["--filter", video_filter])
-        else:
+        elif self.download_images_var.get() and not self.download_videos_var.get():
+            # Only images - filter out video extensions
+            cmd.extend(["--filter", "extension not in ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v']"])
+        elif self.download_videos_var.get() and not self.download_images_var.get():
+            # Only videos - only include video extensions
+            cmd.extend(["--filter", "extension in ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v']"])
+        elif not self.download_images_var.get() and not self.download_videos_var.get():
             # If no content types are selected, don't download anything
             messagebox.showinfo("No Content Types Selected", "Please select at least one content type to download")
             return
         
-        # Add extra options
+        # Add extra options (after basic configuration)
         extra_opts = self.extra_opts_var.get().strip()
         if extra_opts:
             cmd.extend(shlex.split(extra_opts))
         
-        # Add URLs
-        cmd.extend(links)
-        
-        # Update UI
-        self.start_btn.config(state=DISABLED)
-        self.stop_btn.config(state=NORMAL)
-        self.status_var.set("Running...")
-        self.progress_var.set("")
-        
-        # Log the command
-        cmd_str = " ".join(cmd)
-        self.log_callback(f"Starting gallery-dl: {cmd_str}", self.idx)
-        
-        # Start the process
-        try:
-            self.proc = subprocess.Popen(
-                cmd, 
-                stdout=subprocess.PIPE, 
+        # Add URLs - ONE AT A TIME
+        for url in links:
+            # Create a new command for each URL to avoid parsing issues
+            url_cmd = cmd.copy()
+            url_cmd.append(url.strip())
+            
+            # Log the command we're about to run
+            cmd_str = ' '.join(url_cmd)
+            self.log_callback(f"Starting gallery-dl: {cmd_str}", self.idx)
+            
+            # Start the process
+            try:
+                self.proc = subprocess.Popen(
+                url_cmd,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                universal_newlines=True
-            )
+                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+                )
+                
+                # Start thread to read output
+                threading.Thread(target=self._read_output, daemon=True).start()
+                
+                # Set up a check for termination
+                self.after(1000, self.check_terminated)
+                
+                # Update UI
+                self.start_btn.config(state=DISABLED)
+                self.stop_btn.config(state=NORMAL)
+                self.status_var.set("Running...")
+                self.progress_var.set("")
+                
+                return  # Only process one URL at a time
+                
+            except Exception as e:
+                self.log_callback(f"Error starting gallery-dl: {e}", self.idx, "error")
+    
+    def check_terminated(self):
+        """Check if the gallery-dl process has terminated and process next URL if needed"""
+        if self.proc is None:
+            return
             
-            # Start a thread to read output
-            threading.Thread(target=self._read_output, daemon=True).start()
+        if self.proc.poll() is not None:
+            # Process has terminated
+            return_code = self.proc.returncode
+            self.log_callback(f"Download finished with code {return_code}", self.idx, "success" if return_code == 0 else "error")
+            self.proc = None
             
-        except Exception as e:
-            self.status_var.set("Error")
+            # Update UI
             self.start_btn.config(state=NORMAL)
             self.stop_btn.config(state=DISABLED)
-            self.log_callback(f"Error starting gallery-dl: {str(e)}", self.idx, "error")
-    
+            self.status_var.set("Completed" if return_code == 0 else f"Failed (code {return_code})")
+            
+            # Process the next URL if any
+            links = self.links_box.get('1.0', 'end').strip().splitlines()
+            if len(links) > 1:
+                # Remove the first URL (which was just processed)
+                self.links_box.delete('1.0', '2.0')
+                # Save the updated links
+                self._save_links()
+                # Start the next download
+                self.after(1000, self.start)
+        else:
+            # Process still running, check again in 1 second
+            self.after(1000, self.check_terminated)
+            
     def stop(self):
         """Stop the gallery-dl process"""
-        if not self.is_running():
-            return
-        
-        try:
-            self.proc.terminate()
-            self.log_callback("Stopping gallery-dl...", self.idx)
-            
-            # Wait for process to terminate
-            def check_terminated():
-                if self.proc and self.proc.poll() is None:
-                    # Still running, try again in 100ms
-                    self.after(100, check_terminated)
-                else:
-                    # Process terminated
-                    self.start_btn.config(state=NORMAL)
-                    self.stop_btn.config(state=DISABLED)
-                    self.status_var.set("Stopped")
-                    self.log_callback("gallery-dl process stopped", self.idx)
-            
-            check_terminated()
-            
-        except Exception as e:
-            self.log_callback(f"Error stopping gallery-dl: {str(e)}", self.idx, "error")
+        if self.proc is not None:
+            try:
+                # Terminate the process
+                self.proc.terminate()
+                self.log_callback("Stopping gallery-dl...", self.idx)
+                
+                # Store process reference before clearing it
+                proc = self.proc
+                self.proc = None
+                
+                # Update UI immediately
+                self.status_var.set("Stopped")
+                self.start_btn.config(state=NORMAL)
+                self.stop_btn.config(state=DISABLED)
+                
+                # Final cleanup
+                self.log_callback("gallery-dl process stopped", self.idx)
+            except Exception as e:
+                self.log_callback(f"Error stopping gallery-dl: {e}", self.idx, "error")
     
     def _read_output(self):
         """Read output from the gallery-dl process"""
