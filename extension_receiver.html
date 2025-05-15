@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gallery-DL Launcher Extension</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+        }
+        .url-form {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0 15px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #response {
+            margin-top: 20px;
+            padding: 10px;
+            border-left: 4px solid #4CAF50;
+            background-color: #f1f1f1;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Gallery-DL Launcher Extension</h1>
+    
+    <p>This page allows you to send URLs directly to your Gallery-DL Launcher application.</p>
+    
+    <div class="url-form">
+        <h2>Add URL to Download Queue</h2>
+        <form id="urlForm">
+            <label for="url">URL to download:</label>
+            <input type="text" id="url" name="url" placeholder="https://..." required>
+            
+            <button type="submit">Send to Gallery-DL Launcher</button>
+        </form>
+    </div>
+    
+    <div id="response"></div>
+    
+    <script>
+        // Function to handle form submission
+        document.getElementById('urlForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const url = document.getElementById('url').value.trim();
+            if (!url) return;
+            
+            // Send URL to the localhost endpoint where the application is listening
+            fetch('http://localhost:6580/add-url', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ url: url }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                const responseElem = document.getElementById('response');
+                responseElem.style.display = 'block';
+                responseElem.innerHTML = data.message || 'URL sent successfully';
+                
+                // Clear the form
+                document.getElementById('url').value = '';
+            })
+            .catch(error => {
+                const responseElem = document.getElementById('response');
+                responseElem.style.display = 'block';
+                responseElem.innerHTML = 'Error: Gallery-DL Launcher app must be running to receive URLs. Make sure the application is open.';
+                console.error('Error:', error);
+            });
+        });
+        
+        // Check URL parameters when page loads (for extension use)
+        window.addEventListener('load', function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const autoUrl = urlParams.get('url');
+            
+            if (autoUrl) {
+                document.getElementById('url').value = autoUrl;
+                // Optionally auto-submit the form
+                // document.getElementById('urlForm').dispatchEvent(new Event('submit'));
+            }
+        });
+    </script>
+</body>
+</html>
