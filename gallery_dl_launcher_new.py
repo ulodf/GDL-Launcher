@@ -423,22 +423,36 @@ class InstanceFrame(ttk.Frame):
         if output_dir:
             cmd.extend(["-d", str(output_dir)])
         
-        # Add temporary directory for .part files
-        cmd.extend(["--temporary-directory", str(temp_dir)])
+        # Add temporary directory for .part files (using the correct config option)
+        # The proper way to set part-directory according to the docs
+        # Apply to all downloaders by setting for http, text, and ytdl downloaders
+        cmd.extend(["--option", f"downloader.http.part-directory={str(temp_dir)}"])
+        cmd.extend(["--option", f"downloader.text.part-directory={str(temp_dir)}"])
+        cmd.extend(["--option", f"downloader.ytdl.part-directory={str(temp_dir)}"])
         
-        # Add download archive file
+        # Force text-based archive format instead of sqlite
+        # First, use the configuration option to set archive format to text
+        cmd.extend(["--option", "archive.format=text"])
+        
+        # Make sure the archive directory exists
+        archive_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Then use the download archive option
         cmd.extend(["--download-archive", str(archive_file)])
         
         # Add content type filters
-        content_types = []
-        if self.download_images_var.get():
-            content_types.append("image")
-        if self.download_videos_var.get():
-            content_types.append("video")
-        
-        if content_types:
-            cmd.extend(["--filter", "content=" + ",".join(content_types)])
-        elif not self.download_images_var.get() and not self.download_videos_var.get():
+        if self.download_images_var.get() and self.download_videos_var.get():
+            # Both images and videos - no need for filter
+            pass
+        elif self.download_images_var.get():
+            # Only images - exclude video extensions
+            image_filter = "extension not in ('mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v')"
+            cmd.extend(["--filter", image_filter])
+        elif self.download_videos_var.get():
+            # Only videos - use the syntax provided by the user
+            video_filter = "extension in ('mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v')"
+            cmd.extend(["--filter", video_filter])
+        else:
             # If no content types are selected, don't download anything
             messagebox.showinfo("No Content Types Selected", "Please select at least one content type to download")
             return
@@ -851,6 +865,9 @@ class Application(tk.Tk):
         # Instance menu
         instance_menu = tk.Menu(menu_bar, tearoff=0)
         instance_menu.add_command(label="Add Instance", command=self.add_instance)
+        instance_menu.add_separator()
+        instance_menu.add_command(label="Start All Instances", command=self.start_all_instances)
+        instance_menu.add_command(label="Stop All Instances", command=self.stop_all_instances)
         menu_bar.add_cascade(label="Instances", menu=instance_menu)
         
         # Help menu
@@ -859,6 +876,14 @@ class Application(tk.Tk):
         menu_bar.add_cascade(label="Help", menu=help_menu)
         
         self.config(menu=menu_bar)
+        
+        # Create control panel with bulk action buttons
+        control_panel = ttk.Frame(self)
+        control_panel.pack(fill=X, padx=6, pady=(6, 0))
+        
+        # Add bulk action buttons
+        ttk.Button(control_panel, text="Start All Downloads", command=self.start_all_instances).pack(side=LEFT, padx=(0, 5))
+        ttk.Button(control_panel, text="Stop All Downloads", command=self.stop_all_instances).pack(side=LEFT)
     
     def _create_instance(self, idx):
         """Create a new instance tab"""
@@ -899,6 +924,60 @@ class Application(tk.Tk):
         
         self.status_var.set("All settings saved")
         
+    def start_all_instances(self):
+        """Start downloads for all instances"""
+        started_count = 0
+        empty_count = 0
+        already_running = 0
+        
+        for idx, instance in enumerate(self.instances):
+            if instance.is_running():
+                already_running += 1
+                continue
+                
+            # Get URLs from the text box
+            links = instance.links_box.get('1.0', 'end').strip().splitlines()
+            links = [link.strip() for link in links if link.strip()]
+            
+            if not links:
+                empty_count += 1
+                continue
+                
+            # Start the instance
+            instance.start()
+            started_count += 1
+            
+        # Update status
+        status_parts = []
+        if started_count > 0:
+            status_parts.append(f"Started {started_count} instance(s)")
+        if empty_count > 0:
+            status_parts.append(f"Skipped {empty_count} empty instance(s)")
+        if already_running > 0:
+            status_parts.append(f"{already_running} instance(s) already running")
+            
+        status_message = ", ".join(status_parts)
+        self.status_var.set(status_message)
+        self.log_frame.add_log(f"Bulk action: {status_message}")
+    
+    def stop_all_instances(self):
+        """Stop downloads for all running instances"""
+        stopped_count = 0
+        
+        for instance in self.instances:
+            if instance.is_running():
+                instance.stop()
+                stopped_count += 1
+        
+        # Update status
+        if stopped_count > 0:
+            status_message = f"Stopped {stopped_count} running instance(s)"
+            self.status_var.set(status_message)
+            self.log_frame.add_log(f"Bulk action: {status_message}")
+        else:
+            self.status_var.set("No running instances to stop")
+            self.log_frame.add_log("Bulk action: No running instances to stop")
+    
     def save_state(self):
         """Save the application state, including number of instances and window geometry"""
         state_dir = DATA_DIR / "state"
