@@ -211,15 +211,39 @@ class InstanceFrame(ttk.Frame):
         
         # Output directory selector
         output_dir_frame = ttk.Frame(controls_frame)
-        output_dir_frame.pack(fill=X, padx=6, pady=6)
+        output_dir_frame.pack(fill=X, padx=6, pady=(6, 3))
         
         ttk.Label(output_dir_frame, text="Output Directory:").pack(side=LEFT, padx=(0, 5))
         ttk.Entry(output_dir_frame, textvariable=self.output_dir_var, width=50).pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
         ttk.Button(output_dir_frame, text="Browse", command=self._browse_output_dir).pack(side=LEFT)
         
+        # Temporary directory selector
+        temp_dir_frame = ttk.Frame(controls_frame)
+        temp_dir_frame.pack(fill=X, padx=6, pady=(0, 3))
+        
+        ttk.Label(temp_dir_frame, text="Temporary Directory:").pack(side=LEFT, padx=(0, 5))
+        ttk.Entry(temp_dir_frame, textvariable=self.temp_dir_var, width=50).pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
+        ttk.Button(temp_dir_frame, text="Browse", command=self._browse_temp_dir).pack(side=LEFT)
+        
+        # Download archive file selector
+        archive_frame = ttk.Frame(controls_frame)
+        archive_frame.pack(fill=X, padx=6, pady=(0, 3))
+        
+        ttk.Label(archive_frame, text="Download Archive File:").pack(side=LEFT, padx=(0, 5))
+        ttk.Entry(archive_frame, textvariable=self.archive_file_var, width=50).pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
+        ttk.Button(archive_frame, text="Browse", command=self._browse_archive_file).pack(side=LEFT)
+        
+        # Content type filtering
+        filter_frame = ttk.Frame(controls_frame)
+        filter_frame.pack(fill=X, padx=6, pady=(0, 3))
+        
+        ttk.Label(filter_frame, text="Content Types:").pack(side=LEFT, padx=(0, 5))
+        ttk.Checkbutton(filter_frame, text="Download Images", variable=self.download_images_var).pack(side=LEFT, padx=(0, 15))
+        ttk.Checkbutton(filter_frame, text="Download Videos", variable=self.download_videos_var).pack(side=LEFT)
+        
         # Extra options
         extra_opts_frame = ttk.Frame(controls_frame)
-        extra_opts_frame.pack(fill=X, padx=6, pady=6)
+        extra_opts_frame.pack(fill=X, padx=6, pady=(0, 6))
         
         ttk.Label(extra_opts_frame, text="Extra Options:").pack(side=LEFT, padx=(0, 5))
         ttk.Entry(extra_opts_frame, textvariable=self.extra_opts_var, width=50).pack(side=LEFT, fill=X, expand=True)
@@ -270,11 +294,39 @@ class InstanceFrame(ttk.Frame):
         if directory:
             self.output_dir_var.set(directory)
     
+    def _browse_temp_dir(self):
+        """Open directory browser to select temporary directory for .part files"""
+        directory = filedialog.askdirectory(
+            initialdir=self.temp_dir_var.get(),
+            title="Select Temporary Directory for .part Files"
+        )
+        if directory:
+            self.temp_dir_var.set(directory)
+            # Create directory if it doesn't exist
+            Path(directory).mkdir(parents=True, exist_ok=True)
+    
+    def _browse_archive_file(self):
+        """Open file browser to select download archive file"""
+        filename = filedialog.asksaveasfilename(
+            initialfile=self.archive_file_var.get(),
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            title="Select Download Archive File"
+        )
+        if filename:
+            self.archive_file_var.set(filename)
+            # Ensure parent directory exists
+            Path(filename).parent.mkdir(parents=True, exist_ok=True)
+    
     def _save_settings(self):
         """Save instance settings to a JSON file"""
         settings = {
             "output_dir": self.output_dir_var.get(),
-            "extra_opts": self.extra_opts_var.get()
+            "temp_dir": self.temp_dir_var.get(),
+            "archive_file": self.archive_file_var.get(),
+            "extra_opts": self.extra_opts_var.get(),
+            "download_images": self.download_images_var.get(),
+            "download_videos": self.download_videos_var.get()
         }
         
         settings_dir = DATA_DIR / "instances"
@@ -298,7 +350,11 @@ class InstanceFrame(ttk.Frame):
                     settings = json.load(f)
                 
                 self.output_dir_var.set(settings.get("output_dir", str(Path.home() / "Downloads")))
+                self.temp_dir_var.set(settings.get("temp_dir", str(Path.home() / "Downloads" / "temp")))
+                self.archive_file_var.set(settings.get("archive_file", str(DATA_DIR / "archives" / f"instance_{self.idx}_archive.txt")))
                 self.extra_opts_var.set(settings.get("extra_opts", ""))
+                self.download_images_var.set(settings.get("download_images", True))
+                self.download_videos_var.set(settings.get("download_videos", True))
             except Exception as e:
                 print(f"Error loading settings: {e}")
     
@@ -348,6 +404,15 @@ class InstanceFrame(ttk.Frame):
         self._save_settings()
         self._save_links()
         
+        # Create directories if they don't exist
+        output_dir = Path(self.output_dir_var.get())
+        temp_dir = Path(self.temp_dir_var.get())
+        archive_file = Path(self.archive_file_var.get())
+        
+        output_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        archive_file.parent.mkdir(parents=True, exist_ok=True)
+        
         # Build command
         cmd = ["gallery-dl"]
         
@@ -355,10 +420,30 @@ class InstanceFrame(ttk.Frame):
         cmd.extend(self.get_global_opts())
         
         # Add instance-specific options
-        output_dir = self.output_dir_var.get()
         if output_dir:
-            cmd.extend(["-d", output_dir])
+            cmd.extend(["-d", str(output_dir)])
         
+        # Add temporary directory for .part files
+        cmd.extend(["--temporary-directory", str(temp_dir)])
+        
+        # Add download archive file
+        cmd.extend(["--download-archive", str(archive_file)])
+        
+        # Add content type filters
+        content_types = []
+        if self.download_images_var.get():
+            content_types.append("image")
+        if self.download_videos_var.get():
+            content_types.append("video")
+        
+        if content_types:
+            cmd.extend(["--filter", "content=" + ",".join(content_types)])
+        elif not self.download_images_var.get() and not self.download_videos_var.get():
+            # If no content types are selected, don't download anything
+            messagebox.showinfo("No Content Types Selected", "Please select at least one content type to download")
+            return
+        
+        # Add extra options
         extra_opts = self.extra_opts_var.get().strip()
         if extra_opts:
             cmd.extend(shlex.split(extra_opts))
@@ -463,6 +548,254 @@ class InstanceFrame(ttk.Frame):
             pass  # Ignore parsing errors
 
 # ──────────────────────────────────────────────────────────────────────────────
+# URL checker and distributor tab
+# ──────────────────────────────────────────────────────────────────────────────
+class URLCheckerFrame(ttk.Frame):
+    def __init__(self, master: ttk.Notebook, get_instances):
+        super().__init__(master)
+        self.get_instances = get_instances
+        
+        # Create UI Elements
+        self._create_ui()
+    
+    def _create_ui(self):
+        """Create the UI elements for the URL checker"""
+        # URL Input Frame
+        input_frame = ttk.LabelFrame(self, text="URL Checker & Distributor")
+        input_frame.pack(fill=X, padx=6, pady=6)
+        
+        # Single URL check/distribution
+        single_url_frame = ttk.Frame(input_frame)
+        single_url_frame.pack(fill=X, padx=6, pady=(6, 3))
+        
+        self.url_var = tk.StringVar()
+        ttk.Label(single_url_frame, text="URL:").pack(side=LEFT, padx=(0, 5))
+        ttk.Entry(single_url_frame, textvariable=self.url_var, width=60).pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
+        ttk.Button(single_url_frame, text="Check", command=self.check_url).pack(side=LEFT, padx=(0, 5))
+        ttk.Button(single_url_frame, text="Add to Best Instance", command=self.add_to_best_instance).pack(side=LEFT)
+        
+        # Bulk URLs input
+        bulk_frame = ttk.LabelFrame(self, text="Bulk URL Processing")
+        bulk_frame.pack(fill=BOTH, expand=True, padx=6, pady=6)
+        
+        # Bulk URL textbox with scrollbar
+        bulk_text_frame = ttk.Frame(bulk_frame)
+        bulk_text_frame.pack(fill=BOTH, expand=True, padx=6, pady=6)
+        
+        bulk_scrollbar = ttk.Scrollbar(bulk_text_frame)
+        bulk_scrollbar.pack(side=RIGHT, fill=Y)
+        
+        self.bulk_urls_box = tk.Text(bulk_text_frame, height=10, yscrollcommand=bulk_scrollbar.set)
+        self.bulk_urls_box.pack(side=LEFT, fill=BOTH, expand=True)
+        bulk_scrollbar.config(command=self.bulk_urls_box.yview)
+        
+        # Bulk URL buttons
+        bulk_btn_frame = ttk.Frame(bulk_frame)
+        bulk_btn_frame.pack(fill=X, padx=6, pady=(0, 6))
+        
+        ttk.Button(bulk_btn_frame, text="Check All URLs", command=self.check_bulk_urls).pack(side=LEFT, padx=(0, 5))
+        ttk.Button(bulk_btn_frame, text="Distribute All URLs", command=self.distribute_bulk_urls).pack(side=LEFT)
+        
+        # Results frame
+        results_frame = ttk.LabelFrame(self, text="Results")
+        results_frame.pack(fill=BOTH, expand=True, padx=6, pady=6)
+        
+        # Results textbox with scrollbar
+        results_text_frame = ttk.Frame(results_frame)
+        results_text_frame.pack(fill=BOTH, expand=True, padx=6, pady=6)
+        
+        results_scrollbar = ttk.Scrollbar(results_text_frame)
+        results_scrollbar.pack(side=RIGHT, fill=Y)
+        
+        self.results_box = tk.Text(results_text_frame, height=10, yscrollcommand=results_scrollbar.set)
+        self.results_box.pack(side=LEFT, fill=BOTH, expand=True)
+        results_scrollbar.config(command=self.results_box.yview)
+        
+        # Configure tags for coloring
+        self.results_box.tag_configure('found', foreground='green')
+        self.results_box.tag_configure('not_found', foreground='blue')
+        self.results_box.tag_configure('added', foreground='purple')
+        self.results_box.tag_configure('error', foreground='red')
+    
+    def check_url(self):
+        """Check if a URL exists in any instance"""
+        url = self.url_var.get().strip()
+        if not url:
+            self._update_results("Please enter a URL to check", 'error')
+            return
+        
+        instances = self.get_instances()
+        found_in = []
+        
+        for idx, instance in enumerate(instances):
+            if hasattr(instance, 'links_box'):
+                instance_urls = instance.links_box.get('1.0', 'end').strip().splitlines()
+                if url in instance_urls:
+                    found_in.append(idx)
+        
+        if found_in:
+            instances_str = ", ".join([str(idx+1) for idx in found_in])
+            self._update_results(f"URL found in instance(s): {instances_str}", 'found')
+        else:
+            self._update_results("URL not found in any instance", 'not_found')
+    
+    def add_to_best_instance(self):
+        """Add the URL to the instance with the fewest URLs"""
+        url = self.url_var.get().strip()
+        if not url:
+            self._update_results("Please enter a URL to add", 'error')
+            return
+        
+        instances = self.get_instances()
+        if not instances:
+            self._update_results("No instances available", 'error')
+            return
+        
+        # Check if URL already exists in any instance
+        for idx, instance in enumerate(instances):
+            if hasattr(instance, 'links_box'):
+                instance_urls = instance.links_box.get('1.0', 'end').strip().splitlines()
+                if url in instance_urls:
+                    self._update_results(f"URL already exists in instance {idx+1}", 'found')
+                    return
+        
+        # Find the instance with the fewest URLs
+        instance_counts = []
+        for idx, instance in enumerate(instances):
+            if hasattr(instance, 'links_box'):
+                links = instance.links_box.get('1.0', 'end').strip().splitlines()
+                instance_counts.append((idx, len(links)))
+        
+        if not instance_counts:
+            self._update_results("No valid instances found", 'error')
+            return
+        
+        # Sort by URL count
+        instance_counts.sort(key=lambda x: x[1])
+        best_idx = instance_counts[0][0]
+        
+        # Add the URL to the instance with the fewest URLs
+        instance = instances[best_idx]
+        current_text = instance.links_box.get('1.0', 'end').strip()
+        
+        if current_text:
+            instance.links_box.insert('end', f"\n{url}")
+        else:
+            instance.links_box.insert('1.0', url)
+        
+        self._update_results(f"Added URL to instance {best_idx+1}", 'added')
+    
+    def check_bulk_urls(self):
+        """Check multiple URLs at once"""
+        urls = self.bulk_urls_box.get('1.0', 'end').strip().splitlines()
+        urls = [url.strip() for url in urls if url.strip()]
+        
+        if not urls:
+            self._update_results("Please enter URLs to check", 'error')
+            return
+        
+        instances = self.get_instances()
+        results = []
+        
+        for url in urls:
+            found_in = []
+            for idx, instance in enumerate(instances):
+                if hasattr(instance, 'links_box'):
+                    instance_urls = instance.links_box.get('1.0', 'end').strip().splitlines()
+                    if url in instance_urls:
+                        found_in.append(idx)
+            
+            if found_in:
+                instances_str = ", ".join([str(idx+1) for idx in found_in])
+                results.append((url, f"Found in instance(s): {instances_str}", 'found'))
+            else:
+                results.append((url, "Not found in any instance", 'not_found'))
+        
+        self._clear_results()
+        for url, result, tag in results:
+            self.results_box.insert('end', f"{url}: {result}\n", tag)
+    
+    def distribute_bulk_urls(self):
+        """Distribute multiple URLs across instances to maintain balance"""
+        urls = self.bulk_urls_box.get('1.0', 'end').strip().splitlines()
+        urls = [url.strip() for url in urls if url.strip()]
+        
+        if not urls:
+            self._update_results("Please enter URLs to distribute", 'error')
+            return
+        
+        instances = self.get_instances()
+        if not instances:
+            self._update_results("No instances available", 'error')
+            return
+        
+        # Get current URL counts for all instances
+        instance_counts = []
+        for idx, instance in enumerate(instances):
+            if hasattr(instance, 'links_box'):
+                links = instance.links_box.get('1.0', 'end').strip().splitlines()
+                instance_counts.append((idx, links))
+        
+        if not instance_counts:
+            self._update_results("No valid instances found", 'error')
+            return
+        
+        # Filter out URLs that already exist in instances
+        new_urls = []
+        skipped_urls = []
+        for url in urls:
+            exists = False
+            for _, links in instance_counts:
+                if url in links:
+                    exists = True
+                    skipped_urls.append(url)
+                    break
+            if not exists:
+                new_urls.append(url)
+        
+        # Distribute new URLs evenly
+        results = []
+        
+        for url in new_urls:
+            # Find instance with fewest URLs
+            instance_counts.sort(key=lambda x: len(x[1]))
+            best_idx, links = instance_counts[0]
+            
+            # Add URL to instance
+            instance = instances[best_idx]
+            current_text = instance.links_box.get('1.0', 'end').strip()
+            
+            if current_text:
+                instance.links_box.insert('end', f"\n{url}")
+            else:
+                instance.links_box.insert('1.0', url)
+            
+            # Update count for this instance
+            instance_counts[0] = (best_idx, links + [url])
+            
+            results.append((url, f"Added to instance {best_idx+1}", 'added'))
+        
+        # Add skipped URLs to results
+        for url in skipped_urls:
+            results.append((url, "Skipped (already exists)", 'found'))
+        
+        self._clear_results()
+        for url, result, tag in results:
+            self.results_box.insert('end', f"{url}: {result}\n", tag)
+    
+    def _update_results(self, message, tag=None):
+        """Update the results text box"""
+        self._clear_results()
+        if tag:
+            self.results_box.insert('1.0', f"{message}\n", tag)
+        else:
+            self.results_box.insert('1.0', f"{message}\n")
+    
+    def _clear_results(self):
+        """Clear the results text box"""
+        self.results_box.delete('1.0', 'end')
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main application
 # ──────────────────────────────────────────────────────────────────────────────
 class Application(tk.Tk):
@@ -482,6 +815,10 @@ class Application(tk.Tk):
         # Create unified log tab
         self.log_frame = UnifiedLogFrame(self.notebook)
         self.notebook.add(self.log_frame, text="Unified Log")
+        
+        # Create URL checker tab
+        self.url_checker_frame = URLCheckerFrame(self.notebook, lambda: self.instances)
+        self.notebook.add(self.url_checker_frame, text="URL Checker")
         
         # Create instance tabs (default to 3)
         self.instances = []
