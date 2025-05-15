@@ -654,7 +654,7 @@ class URLCheckerFrame(ttk.Frame):
             self._update_results("URL not found in any instance", 'not_found')
     
     def add_to_best_instance(self):
-        """Add the URL to the instance with the fewest URLs"""
+        """Add the URL to the instance with the fewest URLs if it doesn't exist anywhere"""
         url = self.url_var.get().strip()
         if not url:
             self._update_results("Please enter a URL to add", 'error')
@@ -665,14 +665,29 @@ class URLCheckerFrame(ttk.Frame):
             self._update_results("No instances available", 'error')
             return
         
-        # Check if URL already exists in any instance
+        # First explicitly check if the URL exists in any instance
+        url_exists = False
+        exists_in_instance = -1
+        
         for idx, instance in enumerate(instances):
             if hasattr(instance, 'links_box'):
                 instance_urls = instance.links_box.get('1.0', 'end').strip().splitlines()
-                if url in instance_urls:
-                    self._update_results(f"URL already exists in instance {idx+1}", 'found')
-                    return
+                # Check for exact matches
+                for instance_url in instance_urls:
+                    if url.strip() == instance_url.strip():
+                        url_exists = True
+                        exists_in_instance = idx
+                        break
+                        
+            if url_exists:
+                break
         
+        # If URL already exists, don't add it and inform the user
+        if url_exists:
+            self._update_results(f"URL already exists in instance {exists_in_instance+1}. Not adding duplicate.", 'found')
+            return
+        
+        # If we get here, the URL doesn't exist in any instance
         # Find the instance with the fewest URLs
         instance_counts = []
         for idx, instance in enumerate(instances):
@@ -696,6 +711,9 @@ class URLCheckerFrame(ttk.Frame):
             instance.links_box.insert('end', f"\n{url}")
         else:
             instance.links_box.insert('1.0', url)
+        
+        # Save the links after adding
+        instance._save_links()
         
         self._update_results(f"Added URL to instance {best_idx+1}", 'added')
     
